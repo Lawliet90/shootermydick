@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>ShooterMyDick — Kestrel Yard</title>
+<style>
+  :root {
+    --ink: #f2ead9; --muted: #b9a98c; --accent: #ffb347;
+    --teal: #2e7f7a; --rust: #b4552a; --danger: #d43d2a; --good: #7fb069;
+    --panel: rgba(20,16,12,0.88); --line: rgba(242,234,217,0.22);
+    --font-ui: system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --font-readout: ui-monospace, 'SF Mono', Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #6ea8d8; color: var(--ink); font-family: var(--font-ui); }
+  #game, #game canvas { position: fixed; inset: 0; display: block; }
+  #hud { position: fixed; inset: 0; pointer-events: none; }
+
+  /* Every tick is anchored to the box centre and pushed outward by --gap
+     alone, so all four ticks and the dot share one aim point at any gap
+     and any viewport size. That aim point is the exact screen centre:
+     the box sits at 50%/50% with a plain -50%/-50% translate, and the
+     shot ray in src/main.js (crosshairDir) is the camera forward from
+     yaw/pitch, so bullets land on the dot. */
+  #crosshair { position: fixed; left: 50%; top: 50%; width: 32px; height: 32px; transform: translate(-50%, -50%); --gap: 6px; }
+  #crosshair i { position: absolute; left: 50%; top: 50%; background: var(--ink); opacity: .95; box-shadow: 0 0 3px rgba(0,0,0,0.9), 0 0 1px #000; }
+  #crosshair i:nth-child(1) { width: 2px; height: 8px; transform: translate(-50%, calc(-100% - var(--gap))); }
+  #crosshair i:nth-child(2) { width: 2px; height: 8px; transform: translate(-50%, var(--gap)); }
+  #crosshair i:nth-child(3) { width: 8px; height: 2px; transform: translate(calc(-100% - var(--gap)), -50%); }
+  #crosshair i:nth-child(4) { width: 8px; height: 2px; transform: translate(var(--gap), -50%); }
+  /* The dot is the exact aim point: it sits on the shot ray (the screen
+     centre, matching the box transform above) at any viewport size, and
+     big enough to actually see. */
+  #crosshair .dot { width: 3px; height: 3px; transform: translate(-50%,-50%); border-radius: 50%; }
+
+  /* The hitmarker marks hits AT the crosshair, so it shares the exact
+     screen centre. #dmg-indicator below also stays at screen centre. */
+  #hitmarker { position: fixed; left: 50%; top: 50%; width: 30px; height: 30px; transform: translate(-50%, -50%) rotate(45deg); opacity: 0; transition: opacity 90ms linear; }
+  #hitmarker.on { opacity: 1; }
+  #hitmarker i { position: absolute; background: var(--accent); }
+  #hitmarker i:nth-child(1) { left: 14px; top: 0; width: 2px; height: 9px; }
+  #hitmarker i:nth-child(2) { left: 14px; bottom: 0; width: 2px; height: 9px; }
+  #hitmarker i:nth-child(3) { top: 14px; left: 0; height: 2px; width: 9px; }
+  #hitmarker i:nth-child(4) { top: 14px; right: 0; height: 2px; width: 9px; }
+
+  #dmg-indicator { position: fixed; left: 50%; top: 50%; width: 120px; height: 120px; opacity: 0; transition: opacity 150ms linear; }
+  #dmg-indicator.on { opacity: 1; }
+  #dmg-indicator i { position: absolute; left: 50%; top: -6px; margin-left: -40px; width: 80px; height: 14px; background: radial-gradient(ellipse at center, rgba(212,61,42,0.9), rgba(212,61,42,0)); clip-path: polygon(0 100%, 50% 0, 100% 100%); }
+
+  /* Full-screen white flash (flashbang) + red blood vignette on taking a hit. */
+  #flash-overlay { position: fixed; inset: 0; background: #fff; opacity: 0; pointer-events: none; z-index: 8; }
+  #blood-vignette { position: fixed; inset: 0; background: radial-gradient(ellipse at center, rgba(160,10,5,0) 52%, rgba(160,10,5,0.55) 100%); opacity: 0; transition: opacity 120ms linear; pointer-events: none; z-index: 7; }
+  #blood-vignette.on { opacity: 1; }
+
+  #health { position: fixed; left: 28px; bottom: 24px; width: 240px; }
+  #health .bar { height: 12px; border: 1px solid var(--line); background: rgba(0,0,0,0.5); }
+  #health-fill { display: block; height: 100%; width: 100%; background: var(--good); transition: width 150ms linear; }
+  #health-num { font-family: var(--font-readout); font-size: 34px; line-height: 1.1; }
+  #armor-num { font-family: var(--font-readout); font-size: 13px; color: var(--accent); margin-left: 8px; }
+
+  #ammo { position: fixed; right: 28px; bottom: 24px; text-align: right; }
+  #ammo-mag { font-family: var(--font-readout); font-size: 52px; line-height: 1; }
+  #ammo-reserve { font-family: var(--font-readout); font-size: 16px; color: var(--muted); }
+  #weapon-name { font-family: var(--font-readout); font-size: 13px; color: var(--muted); letter-spacing: 0.08em; }
+  #nades { font-family: var(--font-readout); font-size: 12px; color: var(--accent); letter-spacing: 0.08em; margin-top: 2px; min-height: 15px; }
+
+  #topbar { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); text-align: center; }
+  #timer { font-family: var(--font-readout); font-size: 30px; line-height: 1; text-shadow: 0 1px 4px #000; }
+  #scoreboard { font-family: var(--font-readout); font-size: 15px; margin-top: 4px; text-shadow: 0 1px 4px #000; }
+  #scoreboard .v { color: #6fd3cd; } #scoreboard .j { color: #ff9a6b; }
+  #compass { font-family: var(--font-readout); font-size: 12px; color: var(--muted); margin-top: 3px; letter-spacing: 0.15em; }
+  #charge-banner { margin-top: 8px; display: inline-block; padding: 4px 12px; border: 1px solid var(--accent); background: rgba(0,0,0,0.55); font-family: var(--font-readout); font-size: 14px; letter-spacing: 0.06em; }
+  #charge-banner[hidden] { display: none; }
+
+  #money { position: fixed; top: 14px; left: 28px; font-family: var(--font-readout); font-size: 20px; color: var(--accent); text-shadow: 0 1px 4px #000; }
+  #round-label { position: fixed; top: 40px; left: 28px; font-family: var(--font-readout); font-size: 12px; color: var(--muted); letter-spacing: 0.12em; }
+  #killfeed { position: fixed; top: 14px; right: 28px; text-align: right; font-family: var(--font-readout); font-size: 13px; }
+  #killfeed .kf { background: rgba(0,0,0,0.5); padding: 3px 8px; margin-bottom: 4px; border-right: 3px solid var(--teal); }
+  #killfeed .kf.jackal { border-right-color: var(--rust); }
+
+  #banner { position: fixed; top: 22%; left: 50%; transform: translateX(-50%); text-align: center; }
+  #banner[hidden] { display: none; }
+  #banner-title { font-size: 40px; font-weight: 700; letter-spacing: 0.04em; text-shadow: 0 2px 10px #000; }
+  #banner-sub { font-size: 16px; color: var(--muted); text-shadow: 0 1px 4px #000; }
+  #hint { position: fixed; bottom: 86px; left: 50%; transform: translateX(-50%); font-size: 12px; color: var(--muted); text-shadow: 0 1px 3px #000; }
+
+  .overlay { position: fixed; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(18,14,10,0.82); pointer-events: auto; z-index: 10; }
+  .overlay[hidden] { display: none; }
+  .panel { width: min(560px, 100%); max-height: 92vh; overflow: auto; padding: 30px 34px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+  .panel.wide { width: min(740px, 100%); }
+  .panel h1 { margin: 0 0 4px; font-size: 34px; letter-spacing: 0.02em; }
+  .panel h1 .accent { color: var(--accent); }
+  .panel p { margin: 0 0 18px; font-size: 15px; line-height: 1.5; color: var(--muted); }
+  .panel .tag { font-family: var(--font-readout); font-size: 12px; letter-spacing: 0.2em; color: var(--accent); }
+  .big-btn { font: inherit; font-weight: 600; padding: 13px 22px; border: 1px solid var(--accent); border-radius: 6px; background: var(--accent); color: #201408; cursor: pointer; }
+  .big-btn:hover { background: var(--ink); border-color: var(--ink); }
+  .ghost-btn { font: inherit; padding: 10px 16px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--ink); cursor: pointer; }
+  .keys { margin: 20px 0 0; padding: 0; list-style: none; display: grid; grid-template-columns: 1fr 1fr; gap: 7px; font-size: 13px; color: var(--muted); }
+  .keys kbd { padding: 2px 6px; border: 1px solid var(--line); border-radius: 4px; font-family: var(--font-readout); font-size: 12px; color: var(--ink); }
+  #buy-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(205px, 1fr)); gap: 8px; margin: 14px 0; }
+  /* Weapon cards — shared by the pre-game loadout grid and the Armory. */
+  .wcard { display: flex; flex-direction: column; gap: 5px; text-align: left; font: inherit; padding: 11px 13px; border: 1px solid var(--line); border-radius: 6px; background: rgba(255,255,255,0.03); color: var(--ink); cursor: pointer; }
+  .wcard:hover { border-color: var(--accent); }
+  .wcard.owned { opacity: 0.62; }
+  .wcard.picked { border-color: var(--teal); box-shadow: inset 0 0 0 1px var(--teal); }
+  .wcard.selected { border-color: var(--accent); background: rgba(255,179,71,0.13); box-shadow: inset 0 0 0 1px var(--accent); opacity: 1; }
+  .wc-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .wc-name { font-weight: 700; font-size: 15px; }
+  .wc-price { font-family: var(--font-readout); color: var(--accent); font-size: 14px; white-space: nowrap; }
+  .wc-kind { font-family: var(--font-readout); font-size: 11px; letter-spacing: 0.14em; color: var(--muted); }
+  .wc-desc { font-size: 12px; line-height: 1.4; color: var(--muted); flex: 1; }
+  .wc-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .wc-key { font-family: var(--font-readout); font-size: 11px; color: var(--muted); }
+  .wc-badge { font-family: var(--font-readout); font-size: 11px; letter-spacing: 0.1em; color: var(--accent); }
+  .wcard.picked .wc-badge { color: #6fd3cd; }
+  /* Pre-game loadout (start screen) */
+  .loadout-label { font-family: var(--font-readout); font-size: 12px; letter-spacing: 0.2em; color: var(--accent); margin-top: 4px; }
+  #loadout-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; margin: 10px 0 8px; }
+  .loadout-note { font-size: 12px !important; margin-bottom: 12px !important; }
+  #play-game { position: sticky; bottom: 0; z-index: 1; width: 100%; font-size: 17px; letter-spacing: 0.06em; box-shadow: 0 -10px 18px rgba(0,0,0,0.6); }
+  /* Mode select (after PLAY GAME) */
+  .mode-card { display: flex; flex-direction: column; gap: 5px; width: 100%; text-align: left; font: inherit; padding: 16px 18px; margin-bottom: 10px; border: 1px solid var(--line); border-radius: 6px; background: rgba(255,255,255,0.03); color: var(--ink); cursor: pointer; }
+  .mode-card:hover { border-color: var(--accent); background: rgba(255,179,71,0.08); }
+  .mode-name { font-size: 20px; font-weight: 700; letter-spacing: 0.03em; }
+  .mode-name .accent { color: var(--accent); }
+  .mode-desc { font-size: 13px; line-height: 1.45; color: var(--muted); }
+  #mode-pick { font-family: var(--font-readout); font-size: 13px; color: var(--accent); margin-bottom: 14px; }
+  .buy-head { display: flex; justify-content: space-between; align-items: baseline; }
+  /* The buy list can be taller than the panel: keep START ROUND pinned to the
+     bottom of the visible panel so it is always reachable (iPad landscape
+     and small desktop windows both overflowed it before this). */
+  #buy-close { position: sticky; bottom: 0; z-index: 1; margin-top: 8px; box-shadow: 0 -10px 18px rgba(0,0,0,0.6); }
+  #buy-money { font-family: var(--font-readout); font-size: 20px; color: var(--accent); }
+  #end-stats { font-family: var(--font-readout); font-size: 14px; color: var(--muted); margin: 12px 0 20px; line-height: 1.7; white-space: pre-line; }
+  .team-line { font-size: 14px; margin-top: 14px; }
+  .team-line .v { color: #6fd3cd; } .team-line .j { color: #ff9a6b; }
+
+  /* ---- Touch controls (body.touch only; built by src/touch.js) ---- */
+  #touch-ui { display: none; }
+  body.touch #touch-ui { display: block; }
+  #touch-ui { position: fixed; inset: 0; z-index: 5; pointer-events: none; touch-action: none; }
+  #look-zone { position: absolute; right: 0; top: 0; width: 55%; height: 100%; pointer-events: auto; touch-action: none; }
+  #joy-zone { position: absolute; left: 0; bottom: 0; width: 45%; height: 60%; pointer-events: auto; touch-action: none; }
+  #joy-base { position: absolute; width: 120px; height: 120px; margin: -60px 0 0 -60px; border: 2px solid rgba(242,234,217,0.4); border-radius: 50%; background: rgba(0,0,0,0.25); display: none; }
+  #joy-base.on { display: block; }
+  #joy-knob { position: absolute; left: 50%; top: 50%; width: 52px; height: 52px; margin: -26px 0 0 -26px; border-radius: 50%; background: rgba(242,234,217,0.55); }
+  .tbtn { position: absolute; pointer-events: auto; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; display: flex; align-items: center; justify-content: center; border-radius: 50%; border: 2px solid rgba(242,234,217,0.5); background: rgba(0,0,0,0.35); color: var(--ink); font: 600 13px var(--font-ui); letter-spacing: 0.05em; padding: 0; }
+  .tbtn.on { background: rgba(255,179,71,0.55); border-color: var(--accent); }
+  #t-fire { right: 16px; bottom: 16px; width: 88px; height: 88px; font-size: 16px; border-color: rgba(255,179,71,0.7); }
+  #t-ads { right: 120px; bottom: 28px; width: 64px; height: 64px; }
+  #t-jump { right: 24px; bottom: 122px; width: 64px; height: 64px; }
+  #t-rld { right: 112px; bottom: 112px; width: 56px; height: 56px; }
+  #t-swap { right: 196px; bottom: 24px; width: 56px; height: 56px; }
+  #t-frag { right: 196px; bottom: 96px; width: 56px; height: 56px; }
+  #t-crch { right: 112px; bottom: 184px; width: 56px; height: 56px; }
+  #t-defuse { left: 50%; bottom: 150px; transform: translateX(-50%); width: auto; height: 56px; padding: 0 26px; border-radius: 28px; display: none; border-color: var(--accent); color: var(--accent); font-size: 15px; }
+  #t-defuse.show { display: flex; }
+  #t-pause { right: 16px; top: 168px; width: 44px; height: 44px; font-size: 15px; }
+  .touch-only { display: none; }
+  body.touch .touch-only { display: block; }
+  /* Keep the HUD clear of the touch cluster on tablets. */
+  body.touch #health { top: 76px; bottom: auto; left: 20px; width: 180px; }
+  body.touch #health-num { font-size: 26px; }
+  body.touch #ammo { bottom: 296px; right: 20px; }
+  body.touch #hint { display: none; }
+  body.touch #overlay-start .keys { display: none; }
+  body.touch #overlay-start .panel { padding: 22px 24px; }
+  body.touch .wcard { padding: 9px 12px; }
+  body.touch #buy-list { gap: 6px; margin: 10px 0; }
+  body.touch { overscroll-behavior: none; }
+  /* ---- Portrait phones (the user's Android Chrome playtest) ---- */
+  /* Narrow portrait stacks the HUD vertically so nothing collides, and
+     lifts the touch cluster clear of the in-app bottom bar that was
+     cutting FIRE / SWAP / ADS off at the fold. Desktop/landscape untouched. */
+  @media (max-width: 640px) and (orientation: portrait) {
+    #topbar { top: 8px; }
+    #timer { font-size: 24px; display: inline-block; }
+    #scoreboard { font-size: 12px; white-space: nowrap; margin-top: 2px; }
+    #compass { display: none; }
+    #charge-banner { font-size: 12px; padding: 3px 8px; max-width: 88vw; }
+    #money { top: 8px; left: 12px; font-size: 16px; }
+    /* Round label shares the timer row at top-right (money left, timer
+       centre) so it can never sit under the centred scoreboard. 9px keeps
+       even the longest DM label ("DEATHMATCH · FIRST TO 20") clear of the
+       centred timer text; the timer is inline-block so its box is the
+       text, not the full topbar width. */
+    #round-label { top: 8px; left: auto; right: 12px; font-size: 9px; letter-spacing: 0.05em; text-align: right; }
+    #killfeed { top: 132px; right: 10px; font-size: 11px; max-width: 54vw; }
+    #killfeed .kf { padding: 2px 6px; margin-bottom: 3px; }
+    body.touch #health { top: 132px; left: 12px; width: 140px; }
+    body.touch #health-num { font-size: 22px; }
+    body.touch #ammo { bottom: 384px; right: 14px; }
+    body.touch #ammo-mag { font-size: 40px; }
+    #t-fire { bottom: 104px; }
+    #t-ads { bottom: 116px; }
+    #t-jump { bottom: 210px; }
+    #t-rld { bottom: 200px; }
+    #t-swap { bottom: 112px; }
+    #t-frag { bottom: 184px; }
+    #t-crch { bottom: 272px; }
+    #t-defuse { bottom: 238px; }
+    #t-pause { top: 232px; }
+  }
+</style>
+</head>
+<body>
+<div id="game"></div>
+
+<div id="hud" aria-hidden="true">
+  <div id="crosshair"><i></i><i></i><i></i><i></i><i class="dot"></i></div>
+  <div id="hitmarker"><i></i><i></i><i></i><i></i></div>
+  <div id="dmg-indicator"><i></i></div>
+  <div id="health">
+    <div><span id="health-num">100</span><span id="armor-num"></span></div>
+    <div class="bar"><span id="health-fill"></span></div>
+  </div>
+  <div id="ammo">
+    <div><span id="ammo-mag">12</span><span id="ammo-reserve">/ 48</span></div>
+    <div id="weapon-name">P9 SIDEARM</div>
+    <div id="nades"></div>
+  </div>
+  <div id="topbar">
+    <div id="timer">2:00</div>
+    <div id="scoreboard"><span class="v"><span id="team-v">POLICE</span> <b id="score-v">0</b> <span id="alive-v-wrap">(<span id="alive-v">5</span>)</span></span> — <span class="j"><span id="alive-j-wrap">(<span id="alive-j">5</span>)</span> <b id="score-j">0</b> <span id="team-j">TERRORISTS</span></span></div>
+    <div id="compass">◀ N 0° ▶</div>
+    <div id="charge-banner" hidden></div>
+  </div>
+  <div id="money">$800</div>
+  <div id="round-label">ROUND 1 · FIRST TO 5</div>
+  <div id="killfeed"></div>
+  <div id="banner" hidden><div id="banner-title"></div><div id="banner-sub"></div></div>
+  <div id="hint">1 primary · 2 pistol · 3 knife · R reload · G frag · F flash · V smoke · M mute · P pause</div>
+  <div id="blood-vignette"></div>
+  <div id="flash-overlay"></div>
+</div>
+
+<div id="overlay-start" class="overlay">
+  <section class="panel wide" role="dialog" aria-modal="true">
+    <div class="tag">TACTICAL FPS · KESTREL YARD</div>
+    <h1>ShooterMyDick</h1>
+    <p>Pick your primary weapon below, then hit <b>PLAY GAME</b> and choose your match. <b>Competitive 5v5:</b> you are POLICE — stop the TERRORISTS planting the charge at Relay Alpha or Beta, or defuse it; first to 5 rounds. <b>Deathmatch:</b> free-for-all, respawn in 3 seconds — first to 20 kills.</p>
+    <div class="loadout-label">CHOOSE YOUR PRIMARY WEAPON</div>
+    <div id="loadout-grid"></div>
+    <p class="loadout-note">P9 Sidearm and Combat Knife are always yours, free. In Deathmatch your pick is free too; in Competitive it is marked <b>YOUR PICK</b> in the Armory — buy it when you can afford it.</p>
+    <button id="play-game" class="big-btn" type="button">PLAY GAME</button>
+    <p class="touch-only">Left thumb — move · right thumb — look · hold FIRE to shoot · hold ADS to aim · JUMP / RLD / SWAP / FRAG / CRCH on the right. Push the stick to the edge to sprint. SWAP cycles primary / pistol / knife.</p>
+    <p class="team-line"><span class="v">■ POLICE (you + 4 bots)</span> &nbsp; <span class="j">■ TERRORISTS (5 bots, one carries the charge)</span></p>
+    <ul class="keys">
+      <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Move</li>
+      <li><kbd>Mouse</kbd> Look · <kbd>Click</kbd> Fire</li>
+      <li><kbd>RMB</kbd> Aim down sights</li>
+      <li><kbd>Shift</kbd> Sprint · <kbd>Ctrl</kbd>/<kbd>C</kbd> Crouch</li>
+      <li><kbd>Space</kbd> Jump · <kbd>R</kbd> Reload</li>
+      <li><kbd>1</kbd> Primary · <kbd>2</kbd> Pistol · <kbd>3</kbd> Knife</li>
+      <li><kbd>G</kbd> Frag · <kbd>F</kbd> Flash · <kbd>V</kbd> Smoke</li>
+      <li><kbd>E</kbd> Hold to defuse · <kbd>B</kbd> Buy (buy phase)</li>
+      <li><kbd>M</kbd> Mute · <kbd>P</kbd> Pause</li>
+    </ul>
+  </section>
+</div>
+
+<div id="overlay-mode" class="overlay" hidden>
+  <section class="panel" role="dialog" aria-modal="true">
+    <div class="tag">ShooterMyDick</div>
+    <h1>Choose your <span class="accent">match</span></h1>
+    <div id="mode-pick">Primary weapon: VK-7 Carbine</div>
+    <button id="mode-comp" class="mode-card" type="button">
+      <span class="mode-name">COMPETITIVE <span class="accent">5V5</span></span>
+      <span class="mode-desc">POLICE vs TERRORISTS. Stop the charge plant at Relay Alpha or Beta — or defuse it before the 45-second fuse blows. Buy weapons and gear in the Armory each round. First to 5 rounds.</span>
+    </button>
+    <button id="mode-dm" class="mode-card" type="button">
+      <span class="mode-name">DEATH<span class="accent">MATCH</span></span>
+      <span class="mode-desc">Free-for-all. Every weapon and gear item is free, respawn in 3 seconds. First to 20 kills wins.</span>
+    </button>
+    <button id="mode-back" class="ghost-btn" type="button">← BACK TO LOADOUT</button>
+  </section>
+</div>
+
+<div id="overlay-buy" class="overlay" hidden>
+  <section class="panel wide" role="dialog" aria-modal="true">
+    <div class="buy-head"><div><div class="tag" id="buy-tag">BUY PHASE</div><h1>Armory</h1></div><span id="buy-money">$800</span></div>
+    <p>Click a card or press its number key. Weapons come with a full reserve. The round starts when the timer ends — or hit START ROUND.</p>
+    <div id="buy-list"></div>
+    <button id="buy-close" class="big-btn" type="button">START ROUND</button>
+  </section>
+</div>
+
+<div id="overlay-end" class="overlay" hidden>
+  <section class="panel" role="dialog" aria-modal="true">
+    <div class="tag">ShooterMyDick</div>
+    <h1 id="end-title">ROUND OVER</h1>
+    <p id="end-sub"></p>
+    <div id="end-stats"></div>
+    <button id="restart" class="big-btn" type="button">PLAY AGAIN</button>
+  </section>
+</div>
+
+<div id="overlay-pause" class="overlay" hidden>
+  <section class="panel" role="dialog" aria-modal="true">
+    <div class="tag">PAUSED</div>
+    <h1>Standing by</h1>
+    <p id="pause-text">Pointer released. Click Resume to get back in the yard.</p>
+    <button id="resume" class="big-btn" type="button">RESUME</button>
+  </section>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three/three.module.min.js"
+  }
+}
+</script>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
